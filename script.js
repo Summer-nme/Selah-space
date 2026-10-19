@@ -107,6 +107,8 @@
       '<label class="set">Daily reminder<input type="checkbox" id="rem"' + (cfg.rem ? " checked" : "") + '></label><label class="set">Reminder time<input type="time" id="rt" value="' + cfg.time + '"></label>' +
       '<p class="sub"><small>Reminders appear while Selah Space is open.</small></p>' +
       (cloud ? "" : '<label class="set">Your name<input type="text" id="nm2" value="' + esc(cfg.name) + '"></label>') + "</div>" +
+      '<div class="card"><b>Your data</b><div class="row sm"><button class="btn ghost" data-a="exc">Export CSV</button><button class="btn ghost" data-a="exj">Export JSON</button></div>' +
+      (deferred ? '<button class="btn" style="width:100%;margin-top:10px" data-a="inst">Install app</button>' : '<p class="sub"><small>To install: open your browser menu and tap Install app or Add to Home screen.</small></p>') + '</div>' +
       '<button class="btn ghost" style="width:100%" data-a="out">' + (cloud ? "Sign out" : "Reset name") + "</button>";
   }
 
@@ -127,7 +129,11 @@
     b.hidden = did || hm < cfg.time;
     if (!b.hidden && LS("selah_notified") !== td) {
       LS("selah_notified", td);
-      try { if (window.Notification && Notification.permission === "granted") new Notification("Selah Space", { body: "Your daily pause is waiting." }); } catch (e) {}
+      try {
+        if (window.Notification && Notification.permission === "granted" && navigator.serviceWorker) {
+          navigator.serviceWorker.ready.then(function (r) { r.showNotification("Selah Space", { body: "Your daily pause is waiting.", icon: "icon-192.png" }); });
+        }
+      } catch (e) {}
     }
   }
   setInterval(tick, 60000);
@@ -170,11 +176,19 @@
       else if (a === "start") { var nm = $("#nm").value.trim(); if (!nm) S.msg = "Add a name to begin."; else { cfg.name = nm; saveCfg(); S.user = { name: nm }; await refresh(); } }
       else if (a === "signin" || a === "signup") {
         var em = $("#em").value.trim(), pw = $("#pw").value;
+        if (!em || !pw) { S.msg = "Add your email and password."; render(); return; }
         var res = a === "signin" ? await sb.auth.signInWithPassword({ email: em, password: pw }) : await sb.auth.signUp({ email: em, password: pw });
         if (res.error) S.msg = res.error.message;
         else if (res.data.session) { S.user = res.data.session.user; await refresh(); }
         else S.msg = "Check your email to confirm your account, then sign in.";
       }
+      else if (a === "exj") dl("selah-entries.json", "application/json", JSON.stringify(S.entries, null, 2));
+      else if (a === "exc") {
+        var q = function (v) { v = String(v == null ? "" : v); if (/^[=+\-@]/.test(v)) v = "'" + v; return '"' + v.replace(/"/g, '""') + '"'; };
+        var rows = [["date", "mood", "type", "entry", "resolved", "kept"].join(",")].concat(S.entries.map(function (e) { return [e.created_at, MOODS[e.mood][0], e.kind, e.body, e.resolved ? "yes" : "no", e.keep ? "yes" : "no"].map(q).join(","); }));
+        dl("selah-entries.csv", "text/csv", rows.join("\n"));
+      }
+      else if (a === "inst") { if (deferred) { deferred.prompt(); deferred = null; } }
       else if (a === "out") { if (cloud) await sb.auth.signOut(); else { cfg.name = ""; saveCfg(); } S.user = null; S.entries = cloud ? [] : S.entries; S.view = "home"; }
     } catch (e) { S.msg = e && e.message ? e.message : "Something went wrong. Try again."; }
     render();
@@ -190,6 +204,17 @@
     saveCfg(); tick();
   });
 
+  // ---------- install, export, offline ----------
+  var deferred = null;
+  function dl(name, type, text) {
+    var a = document.createElement("a");
+    a.href = URL.createObjectURL(new Blob([text], { type: type }));
+    a.download = name; document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(function () { URL.revokeObjectURL(a.href); }, 1000);
+  }
+  window.addEventListener("beforeinstallprompt", function (e) { e.preventDefault(); deferred = e; if (S.user && S.view === "settings") render(); });
+  if ("serviceWorker" in navigator) navigator.serviceWorker.register("sw.js").catch(function () {});
+
   // ---------- start ----------
   (async function () {
     if (cloud) { var r = await sb.auth.getSession(); S.user = r.data.session ? r.data.session.user : null; }
@@ -198,4 +223,3 @@
     render();
   })();
 })();
-        
